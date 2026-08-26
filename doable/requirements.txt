@@ -1,0 +1,5 @@
+httpx
+google-genai
+openai
+python-dotenv
+pytest
