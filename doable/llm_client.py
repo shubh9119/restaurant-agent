@@ -22,7 +22,7 @@ class LLMResponse:
 
 
 class GeminiClient:
-    def __init__(self, api_key, model="gemini-3.6-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-3.5-flash"):
         from google import genai
         self.client = genai.Client(api_key=api_key)
         self.model = model
@@ -68,9 +68,19 @@ class GeminiClient:
             system_instruction=system_text or None,
             tools=gemini_tools,
         )
-        response = self.client.models.generate_content(
-            model=self.model, contents=contents, config=config
-        )
+        # Auto-retry on rate limits (429) up to 3 times
+        import time
+        for attempt in range(3):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model, contents=contents, config=config
+                )
+                break
+            except Exception as e:
+                if "429" in str(e) and attempt < 2:
+                    time.sleep(3)
+                    continue
+                raise e
 
         if not response.candidates:
             return LLMResponse(content="Sorry, I couldn't generate a response.")

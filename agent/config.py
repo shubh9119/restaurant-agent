@@ -16,7 +16,7 @@ class Config:
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "gemini")
 
     # Model name passed to the provider SDK
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-2.0-flash")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-3.5-flash")
 
     # Provider API keys
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")

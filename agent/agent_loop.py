@@ -97,6 +97,7 @@ class AgentLoop:
             assistant_msg: dict = {
                 "role": "assistant",
                 "content": None,
+                "_raw_content": getattr(response, "_raw_content", None),
                 "tool_calls": [],
             }
             for tc in response.tool_calls:

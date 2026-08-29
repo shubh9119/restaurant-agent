@@ -56,7 +56,7 @@ def identify_customer(api):
 def main():
     parser = argparse.ArgumentParser(description="Restaurant AI Agent")
     parser.add_argument("--backend", default=os.getenv("BACKEND_URL", "http://localhost:8000"))
-    parser.add_argument("--model", default=os.getenv("LLM_MODEL", "gemini-3.6-flash"))
+    parser.add_argument("--model", default=os.getenv("LLM_MODEL", "gemini-3.5-flash"))
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 

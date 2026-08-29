@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -21,6 +22,7 @@ class LLMResponse:
     """Unified LLM response: either text content or tool calls (not both)."""
     content: Optional[str] = None
     tool_calls: list[ToolCall] = field(default_factory=list)
+    _raw_content: Optional[Any] = None  # Preserves provider-specific raw response (e.g. Gemini thought signatures)
 
     @property
     def has_tool_calls(self) -> bool:
@@ -38,7 +40,7 @@ class BaseLLMClient:
 class GeminiClient(BaseLLMClient):
     """Google Gemini client using the google-genai SDK."""
 
-    def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash"):
+    def __init__(self, api_key: str, model_name: str = "gemini-3.5-flash"):
         from google import genai
         self._client = genai.Client(api_key=api_key)
         self._model = model_name
@@ -63,7 +65,11 @@ class GeminiClient(BaseLLMClient):
                 ))
 
             elif role == "assistant":
-                if msg.get("tool_calls"):
+                # If we have a cached raw Gemini Content, use it directly
+                # This preserves thought_signatures required by newer Gemini models
+                if msg.get("_raw_content") is not None:
+                    contents.append(msg["_raw_content"])
+                elif msg.get("tool_calls"):
                     # Reconstruct function call parts
                     parts = []
                     for tc in msg["tool_calls"]:
@@ -124,22 +130,32 @@ class GeminiClient(BaseLLMClient):
             tools=gemini_tools,
         )
 
-        # Call the API
-        response = self._client.models.generate_content(
-            model=self._model,
-            contents=contents,
-            config=config,
-        )
+        # Call the API with automatic rate-limit retry
+        response = None
+        for attempt in range(3):
+            try:
+                response = self._client.models.generate_content(
+                    model=self._model,
+                    contents=contents,
+                    config=config,
+                )
+                break
+            except Exception as e:
+                if "429" in str(e) and attempt < 2:
+                    time.sleep(3)
+                    continue
+                raise e
 
         # Parse response
-        if not response.candidates:
+        if not response or not response.candidates:
             return LLMResponse(content="I'm sorry, I couldn't generate a response.")
 
         candidate = response.candidates[0]
+        raw_content = candidate.content
         tool_calls = []
         text_parts = []
 
-        for part in candidate.content.parts:
+        for part in raw_content.parts:
             if part.function_call:
                 fc = part.function_call
                 args = dict(fc.args) if fc.args else {}
@@ -152,8 +168,8 @@ class GeminiClient(BaseLLMClient):
                 text_parts.append(part.text)
 
         if tool_calls:
-            return LLMResponse(tool_calls=tool_calls)
-        return LLMResponse(content="\n".join(text_parts) if text_parts else "")
+            return LLMResponse(tool_calls=tool_calls, _raw_content=raw_content)
+        return LLMResponse(content="\n".join(text_parts) if text_parts else "", _raw_content=raw_content)
 
 
 class OpenAIClient(BaseLLMClient):
@@ -165,9 +181,15 @@ class OpenAIClient(BaseLLMClient):
         self._model = model_name
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMResponse:
+        # Strip provider-specific keys like _raw_content before sending to OpenAI
+        clean_messages = []
+        for m in messages:
+            clean_m = {k: v for k, v in m.items() if not k.startswith("_")}
+            clean_messages.append(clean_m)
+
         kwargs: dict[str, Any] = {
             "model": self._model,
-            "messages": messages,
+            "messages": clean_messages,
         }
         if tools:
             kwargs["tools"] = tools
@@ -201,7 +223,7 @@ def create_llm_client(provider: str, **kwargs: Any) -> BaseLLMClient:
     if provider == "gemini":
         return GeminiClient(
             api_key=kwargs.get("api_key", ""),
-            model_name=kwargs.get("model_name", "gemini-2.0-flash"),
+            model_name=kwargs.get("model_name", "gemini-3.5-flash"),
         )
     elif provider in ("openai", "ollama"):
         return OpenAIClient(
