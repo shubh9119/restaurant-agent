@@ -105,9 +105,12 @@ def setup_qdrant() -> Tuple[QdrantClient, TextEmbedding]:
 def process_pdf(file) -> List:
     """Process PDF file and split into chunks with metadata."""
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-            tmp_file.write(file.getvalue())
-            loader = PyPDFLoader(tmp_file.name)
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                tmp_file.write(file.getvalue())
+                tmp_path = tmp_file.name
+            loader = PyPDFLoader(tmp_path)
             documents = loader.load()
             
             # Add source metadata
@@ -123,6 +126,12 @@ def process_pdf(file) -> List:
                 chunk_overlap=200
             )
             return text_splitter.split_documents(documents)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
     except Exception as e:
         st.error(f"📄 PDF processing error: {str(e)}")
         return []
@@ -131,23 +140,26 @@ def store_embeddings(
     client: QdrantClient,
     embedding_model: TextEmbedding,
     documents: List,
-    collection_name: str
+    collection_name: str,
+    batch_size: int = 64
 ) -> None:
-    """Store document embeddings in Qdrant."""
-    for doc in documents:
-        embedding = list(embedding_model.embed([doc.page_content]))[0]
+    """Store document embeddings in Qdrant using batched vector upserts for low latency."""
+    if not documents:
+        return
+    texts = [doc.page_content for doc in documents]
+    embeddings = list(embedding_model.embed(texts))
+    points = [
+        models.PointStruct(
+            id=str(uuid.uuid4()),
+            vector=emb.tolist(),
+            payload={"content": doc.page_content, **doc.metadata}
+        )
+        for doc, emb in zip(documents, embeddings)
+    ]
+    for i in range(0, len(points), batch_size):
         client.upsert(
             collection_name=collection_name,
-            points=[
-                models.PointStruct(
-                    id=str(uuid.uuid4()),
-                    vector=embedding.tolist(),
-                    payload={
-                        "content": doc.page_content,
-                        **doc.metadata
-                    }
-                )
-            ]
+            points=points[i:i + batch_size]
         )
 
 def setup_agents(openai_api_key: str) -> Tuple[Agent, Agent]:
@@ -249,35 +261,19 @@ async def process_query(
         # Generate and play audio with streaming
         async_openai = AsyncOpenAI(api_key=openai_api_key)
         
-        # First create streaming response
-        async with async_openai.audio.speech.with_streaming_response.create(
+        # Synthesize audio once and stream locally with graceful fallback for headless servers
+        audio_response = await async_openai.audio.speech.create(
             model="gpt-4o-mini-tts",
             voice=voice,
             input=text_response,
             instructions=voice_instructions,
-            response_format="pcm",
-        ) as stream_response:
-            st.write("Starting audio playback...")
-            # Play audio directly using LocalAudioPlayer
-            await LocalAudioPlayer().play(stream_response)
-            st.write("Audio playback complete")
-            
-            st.write("Generating downloadable MP3 version...")
-            # Also save as MP3 for download
-            audio_response = await async_openai.audio.speech.create(
-                model="gpt-4o-mini-tts",
-                voice=voice,
-                input=text_response,
-                instructions=voice_instructions,
-                response_format="mp3"
-            )
-            
-            temp_dir = tempfile.gettempdir()
-            audio_path = os.path.join(temp_dir, f"response_{uuid.uuid4()}.mp3")
-            
-            with open(audio_path, "wb") as f:
-                f.write(audio_response.content)
-            st.write(f"Saved MP3 file to: {audio_path}")
+            response_format="mp3"
+        )
+        temp_dir = tempfile.gettempdir()
+        audio_path = os.path.join(temp_dir, f"response_{uuid.uuid4()}.mp3")
+        with open(audio_path, "wb") as f:
+            f.write(audio_response.content)
+        st.write(f"Saved MP3 file to: {audio_path}")
         
         st.success("✅ Query processing complete!")
         return {
