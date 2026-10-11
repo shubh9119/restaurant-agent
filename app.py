@@ -20,7 +20,7 @@ from agents import Agent, Runner
 load_dotenv()
 
 # Constants
-COLLECTION_NAME = "voice-rag-agent"
+COLLECTION_NAME = "low-latency-voice-rag-index"
 
 def init_session_state() -> None:
     """Initialize Streamlit session state with default values."""
@@ -167,7 +167,7 @@ def setup_agents(openai_api_key: str) -> Tuple[Agent, Agent]:
     os.environ["OPENAI_API_KEY"] = openai_api_key
     
     processor_agent = Agent(
-        name="Documentation Processor",
+        name="Voice RAG Context Synthesizer",
         instructions="""You are a helpful documentation assistant. Your task is to:
         1. Analyze the provided documentation content
         2. Answer the user's question clearly and concisely
@@ -179,7 +179,7 @@ def setup_agents(openai_api_key: str) -> Tuple[Agent, Agent]:
     )
 
     tts_agent = Agent(
-        name="Text-to-Speech Agent",
+        name="Neural TTS Prosody Controller",
         instructions="""You are a text-to-speech agent. Your task is to:
         1. Convert the processed documentation response into natural speech
         2. Maintain proper pacing and emphasis
@@ -295,7 +295,7 @@ async def process_query(
 def main() -> None:
     """Main application function."""
     st.set_page_config(
-        page_title="Voice RAG Agent",
+        page_title="Low-Latency Voice AI & RAG Agent",
         page_icon="🎙️",
         layout="wide"
     )
@@ -303,7 +303,7 @@ def main() -> None:
     init_session_state()
     setup_sidebar()
     
-    st.title("🎙️ Voice RAG Agent")
+    st.title("🎙️ Low-Latency Voice AI & Speech RAG Pipeline")
     st.info("Get voice-powered answers to your documentation questions by configuring your API keys and uploading PDF documents. Then, simply ask questions to receive both text and voice responses!")
     
     # File upload section
